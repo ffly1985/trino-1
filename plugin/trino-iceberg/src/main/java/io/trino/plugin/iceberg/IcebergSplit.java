@@ -66,7 +66,8 @@ public class IcebergSplit
     @Override
     public boolean isRemotelyAccessible()
     {
-        return true;
+        return false;
+        /**return true;**/
     }
 
     @JsonProperty

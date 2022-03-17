@@ -16,6 +16,7 @@ package io.trino.plugin.iceberg;
 import com.google.common.collect.ImmutableList;
 import io.airlift.units.Duration;
 import io.trino.plugin.base.classloader.ClassLoaderSafeConnectorSplitSource;
+import io.trino.plugin.hive.HdfsEnvironment;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
 import io.trino.spi.connector.ConnectorSplitSource;
@@ -25,6 +26,7 @@ import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.DynamicFilter;
 import io.trino.spi.connector.FixedSplitSource;
 import io.trino.spi.type.TypeManager;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableScan;
 
@@ -40,12 +42,14 @@ public class IcebergSplitManager
 
     private final IcebergTransactionManager transactionManager;
     private final TypeManager typeManager;
+    private final HdfsEnvironment hdfsEnvironment;
 
     @Inject
-    public IcebergSplitManager(IcebergTransactionManager transactionManager, TypeManager typeManager)
+    public IcebergSplitManager(IcebergTransactionManager transactionManager, TypeManager typeManager, HdfsEnvironment hdfsEnvironment)
     {
         this.transactionManager = requireNonNull(transactionManager, "transactionManager is null");
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
+        this.hdfsEnvironment = hdfsEnvironment;
     }
 
     @Override
@@ -80,7 +84,9 @@ public class IcebergSplitManager
                 constraint,
                 typeManager,
                 table.isRecordScannedFiles());
-
+        /**扩展开始*/
+        splitSource.setConnectorSession(session);
+        splitSource.setHdfsEnvironment(hdfsEnvironment);
         return new ClassLoaderSafeConnectorSplitSource(splitSource, Thread.currentThread().getContextClassLoader());
     }
 }

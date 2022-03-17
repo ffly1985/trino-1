@@ -21,19 +21,20 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Streams;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
+import io.trino.plugin.hive.HdfsEnvironment;
+import io.trino.plugin.hive.InternalHiveSplit;
+import io.trino.spi.HostAddress;
 import io.trino.spi.TrinoException;
-import io.trino.spi.connector.ColumnHandle;
-import io.trino.spi.connector.ConnectorPartitionHandle;
-import io.trino.spi.connector.ConnectorSplit;
-import io.trino.spi.connector.ConnectorSplitSource;
-import io.trino.spi.connector.Constraint;
-import io.trino.spi.connector.DynamicFilter;
+import io.trino.spi.connector.*;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.NullableValue;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.predicate.ValueSet;
 import io.trino.spi.type.TypeManager;
+import org.apache.hadoop.fs.BlockLocation;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.FileScanTask;
@@ -48,20 +49,14 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Suppliers.memoize;
 import static com.google.common.base.Verify.verify;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.collect.Sets.intersection;
 import static io.trino.plugin.iceberg.ExpressionConverter.toIcebergExpression;
@@ -183,7 +178,7 @@ public class IcebergSplitSource
                 continue;
             }
 
-            IcebergSplit icebergSplit = toIcebergSplit(scanTask);
+            IcebergSplit icebergSplit = this.toIcebergSplit(scanTask);
 
             Schema fileSchema = scanTask.spec().schema();
             Set<IcebergColumnHandle> identityPartitionColumns = icebergSplit.getPartitionKeys().keySet().stream()
@@ -371,15 +366,83 @@ public class IcebergSplitSource
         return true;
     }
 
-    private static IcebergSplit toIcebergSplit(FileScanTask task)
+    private  IcebergSplit toIcebergSplit(FileScanTask task)
     {
-        return new IcebergSplit(
-                task.file().path().toString(),
-                task.start(),
-                task.length(),
-                task.file().fileSizeInBytes(),
-                IcebergFileFormat.fromIceberg(task.file().format()),
-                ImmutableList.of(),
-                getPartitionKeys(task));
+        /**扩展开始,找到文件的block信息，获取hostaddress*/
+        //FileSystem fs = hdfsEnvironment.getFileSystem(hdfsContext, path);
+        try {
+            FileSystem fileSystem =
+                    hdfsEnvironment.getFileSystem(new HdfsEnvironment.HdfsContext(session),
+                            new Path(task.file().path().toString()));
+            BlockLocation[] blockLocations =
+                    fileSystem.getFileBlockLocations(new Path(task.file().path().toString()),
+                            task.start(),task.length());
+            long start = task.start();
+            long length = task.length();
+            List<HostAddress> hostAddressList = new ArrayList<>();
+            for (BlockLocation blockLocation : blockLocations) {
+                // clamp the block range
+                long blockStart = Math.max(start, blockLocation.getOffset());
+                long blockEnd = Math.min(start + length, blockLocation.getOffset() + blockLocation.getLength());
+                if (blockStart > blockEnd) {
+                    // block is outside split range
+                    continue;
+                }
+                if (blockStart == blockEnd && !(blockStart == start && blockEnd == start + length)) {
+                    // skip zero-width block, except in the special circumstance: slice is empty, and the block covers the empty slice interval.
+                    continue;
+                }
+                hostAddressList.addAll(getHostAddresses(blockLocation));
+                //blockBuilder.add(new InternalHiveSplit.InternalHiveBlock(blockStart, blockEnd, getHostAddresses(blockLocation)));
+            }
+            /**扩展结束，赋予hostaddress，让uniformscheduler调度器能够实现本地化调度*/
+            return new IcebergSplit(
+                    task.file().path().toString(),
+                    task.start(),
+                    task.length(),
+                    task.file().fileSizeInBytes(),
+                    IcebergFileFormat.fromIceberg(task.file().format()),
+                    /**原始
+                     * ImmutableList.of(),修改为hostAddressList
+                     */
+                    hostAddressList,
+                    getPartitionKeys(task));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return null;
     }
+
+    /**扩展开始，添加了必要的方法，session和hdfsEnvironment用来获取文件系统的句柄fileSystem*/
+    private    ConnectorSession session;
+
+    public  void setHdfsEnvironment(HdfsEnvironment hdfsEnvironment) {
+        this.hdfsEnvironment = hdfsEnvironment;
+    }
+
+    private  HdfsEnvironment hdfsEnvironment;
+
+    public  void setConnectorSession(ConnectorSession session) {
+        this.session = session;
+    }
+
+    private  List<HostAddress> getHostAddresses(BlockLocation blockLocation)
+    {
+        // Hadoop FileSystem returns "localhost" as a default
+        return Arrays.stream(getBlockHosts(blockLocation))
+                .map(HostAddress::fromString)
+                .filter(address -> !address.getHostText().equals("localhost"))
+                .collect(toImmutableList());
+    }
+    private  String[] getBlockHosts(BlockLocation blockLocation)
+    {
+        try {
+            return blockLocation.getHosts();
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+    /**扩展结束*/
 }
