@@ -48,6 +48,8 @@ import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -95,6 +97,7 @@ public class IcebergSplitSource
 
     private final boolean recordScannedFiles;
     private final ImmutableSet.Builder<DataFile> scannedFiles = ImmutableSet.builder();
+    private FileSystem sourceFileSystem = null;
 
     public IcebergSplitSource(
             IcebergTableHandle tableHandle,
@@ -371,9 +374,14 @@ public class IcebergSplitSource
         /**扩展开始,找到文件的block信息，获取hostaddress*/
         //FileSystem fs = hdfsEnvironment.getFileSystem(hdfsContext, path);
         try {
-            FileSystem fileSystem =
-                    hdfsEnvironment.getFileSystem(new HdfsEnvironment.HdfsContext(session),
-                            new Path(task.file().path().toString()));
+            FileSystem fileSystem;
+            if (sourceFileSystem == null) {
+                fileSystem = hdfsEnvironment.getFileSystem(new HdfsEnvironment.HdfsContext(session),
+                                new Path(task.file().path().toString()));
+            } else {
+                fileSystem = sourceFileSystem;
+            }
+
             BlockLocation[] blockLocations =
                     fileSystem.getFileBlockLocations(new Path(task.file().path().toString()),
                             task.start(),task.length());
@@ -431,6 +439,13 @@ public class IcebergSplitSource
     {
         // Hadoop FileSystem returns "localhost" as a default
         return Arrays.stream(getBlockHosts(blockLocation))
+                .map(hostAddress -> {
+                    try {
+                        return InetAddress.getByName(hostAddress).getHostAddress();
+                    } catch (UnknownHostException unknownHostException) {
+                        return hostAddress;
+                    }
+                })
                 .map(HostAddress::fromString)
                 .filter(address -> !address.getHostText().equals("localhost"))
                 .collect(toImmutableList());
@@ -442,6 +457,20 @@ public class IcebergSplitSource
         }
         catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    public void setSourceFileSystem() {
+        try {
+            String tableLocation = tableScan.table().location();
+            System.out.println("IcebergSplitSource() tableLocation " + tableLocation);
+            sourceFileSystem = hdfsEnvironment.getFileSystem(new HdfsEnvironment.HdfsContext(session),
+                    new Path(tableLocation));
+        } catch (Exception exception) {
+            System.err.println("IcebergSplitSource() get error when fileSystem");
+            System.err.println("IcebergSplitSource() exception " + exception.getMessage());
+            System.err.println("IcebergSplitSource() exception " + exception.getStackTrace());
+            // do nothing
         }
     }
     /**扩展结束*/

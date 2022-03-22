@@ -87,6 +87,7 @@ public class IcebergSplitManager
         /**扩展开始*/
         splitSource.setConnectorSession(session);
         splitSource.setHdfsEnvironment(hdfsEnvironment);
+        splitSource.setSourceFileSystem();
         return new ClassLoaderSafeConnectorSplitSource(splitSource, Thread.currentThread().getContextClassLoader());
     }
 }
