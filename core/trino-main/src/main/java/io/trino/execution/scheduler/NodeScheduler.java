@@ -119,6 +119,19 @@ public class NodeScheduler
                         .filter(node -> includeCoordinator || !coordinatorIds.contains(node.getNodeIdentifier()))
                         .forEach(chosen::add);
             }
+
+            System.out.println("***********************************\n");
+            System.out.print("NodeScheduler.selectExactNodes ———— includeCoordinator " + includeCoordinator +" chosen" + chosen
+                    + "\n nodeMap.getNodesByHostAndPort().keySet() " + nodeMap.getNodesByHostAndPort().keySet()
+                    + "\n nodeMap.getNodesByHostAndPort() " + nodeMap.getNodesByHostAndPort().toString()
+                    +"\n nodeMap.getNodesByHost().get(address) " + nodeMap.getNodesByHost().get(address)
+                    + "\n nodeMap.getNodesByHost() " + nodeMap.getNodesByHost().keySet()
+                    +"\n address " + address
+                    +"\n host " + host
+                    +"\n Gethost " + nodeMap.getNodesByHostAndPort().get(host)
+                    + "\n nodeMap.getNodesByHost().get(address) " + nodeMap.getNodesByHost().get(address)
+            );
+            System.out.println("\n ***********************************");
         }
 
         // if the chosen set is empty and the host is the coordinator, force pick the coordinator

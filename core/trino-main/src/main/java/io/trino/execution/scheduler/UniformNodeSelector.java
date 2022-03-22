@@ -139,6 +139,9 @@ public class UniformNodeSelector
         boolean splitsToBeRedistributed = false;
         Set<Split> remainingSplits = new HashSet<>();
 
+        int all = splits.size();
+        int local = 0;
+        String localhost = "null  ";
         // optimizedLocalScheduling enables prioritized assignment of splits to local nodes when splits contain locality information
         if (optimizedLocalScheduling) {
             for (Split split : splits) {
@@ -153,6 +156,7 @@ public class UniformNodeSelector
                         assignment.put(chosenNode.get(), split);
                         assignmentStats.addAssignedSplit(chosenNode.get(), split.getSplitWeight());
                         splitsToBeRedistributed = true;
+                        local ++;
                         continue;
                     }
                 }
@@ -162,6 +166,8 @@ public class UniformNodeSelector
         else {
             remainingSplits = splits;
         }
+
+        System.out.println("UniformNodeSelector.computeAssignments, all split " + all + "; local split " + local);
 
         for (Split split : remainingSplits) {
             randomCandidates.reset();
